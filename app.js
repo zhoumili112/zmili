@@ -52,6 +52,14 @@ function validDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+function selectableMonth(value) {
+  return validMonth(value) && value <= currentMonth();
+}
+
+function selectableDay(value) {
+  return validDate(value) && value <= localDate();
+}
+
 function parseDate(value) {
   return value.normalize("NFKC").trim().replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 }
@@ -145,7 +153,7 @@ function shiftDay(value, step) {
   return date.toISOString().slice(0, 10);
 }
 
-function renderDateNavigator(relativeLabel) {
+function renderDateNavigator(relativeLabel, today) {
   let label = "全部日期";
   let detail = "";
   if (period.length === 10) {
@@ -163,7 +171,7 @@ function renderDateNavigator(relativeLabel) {
   $("current-date").setAttribute("aria-label", [relativeLabel, dateLabel, "选择日期"].filter(Boolean).join("，"));
   const current = anchorDate();
   $("previous-day").disabled = current === "1900-01-01";
-  $("next-day").disabled = current === "9999-12-31";
+  $("next-day").disabled = current >= today;
 }
 
 function renderCalendar() {
@@ -173,7 +181,9 @@ function renderCalendar() {
   const offset = (first.getUTCDay() + 6) % 7;
   const cells = Array.from({ length: offset }, () => make("span"));
   const { today, yesterday } = recentDates();
-  for (let day = 1; day <= last.getUTCDate(); day += 1) {
+  const latestMonth = today.slice(0, 7);
+  const lastDay = calendarMonth === latestMonth ? Number(today.slice(-2)) : last.getUTCDate();
+  for (let day = 1; day <= lastDay; day += 1) {
     const value = `${calendarMonth}-${String(day).padStart(2, "0")}`;
     const button = make("button", "", day);
     button.type = "button";
@@ -184,9 +194,11 @@ function renderCalendar() {
     if (value === today) button.setAttribute("aria-current", "date");
     cells.push(button);
   }
-  $("calendar-month").value = calendarMonth;
+  const monthInput = $("calendar-month");
+  monthInput.max = latestMonth;
+  monthInput.value = calendarMonth;
   $("calendar-previous-month").disabled = calendarMonth === "1900-01";
-  $("calendar-next-month").disabled = calendarMonth === "9999-12";
+  $("calendar-next-month").disabled = calendarMonth >= latestMonth;
   $("calendar-days").replaceChildren(...cells);
 }
 
@@ -211,20 +223,22 @@ function changePeriod(value, direction) {
 
 function moveDay(step) {
   const date = shiftDay(anchorDate(), step);
-  if (validDate(date)) changePeriod(date, step);
+  if (selectableDay(date)) changePeriod(date, step);
+}
+
+function setCalendarMonth(month) {
+  if (selectableMonth(month)) calendarMonth = month;
+  renderCalendar();
 }
 
 function moveCalendarMonth(step) {
   const date = new Date(`${calendarMonth}-01T00:00:00Z`);
   date.setUTCMonth(date.getUTCMonth() + step);
-  const month = date.toISOString().slice(0, 7);
-  if (validMonth(month)) {
-    calendarMonth = month;
-    renderCalendar();
-  }
+  setCalendarMonth(date.toISOString().slice(0, 7));
 }
 
 function selectCalendarPeriod(value) {
+  if (value && !(value.length === 7 ? selectableMonth(value) : selectableDay(value))) return;
   const direction = value.length === 10 && period.length === 10 ? Math.sign(value.localeCompare(period)) : 0;
   $("date-dialog").close();
   changePeriod(value, direction);
@@ -345,7 +359,7 @@ function render() {
     .sort((a, b) => b.date.localeCompare(a.date));
   const dates = recentDates();
   const relativeLabel = period === dates.today ? "今天" : period === dates.yesterday ? "昨天" : "";
-  renderDateNavigator(relativeLabel);
+  renderDateNavigator(relativeLabel, dates.today);
   const scopeLabel = period ? relativeLabel || periodName(period) : "";
   const filterActive = $("type-filter").value !== "all" || $("search").value.trim();
   $("demo-banner").hidden = !demo;
@@ -451,7 +465,7 @@ $("entry-form").addEventListener("submit", async (event) => {
       return previous.map((entry) => entry.id === editedId ? item : entry);
     });
     if (demo) enterPersonal();
-    else if (period) period = date.slice(0, period.length);
+    else if (period && date <= localDate()) period = date.slice(0, period.length);
     $("entry-dialog").close();
     render();
     showToast(editedId ? "流水已更新" : "流水已保存");
@@ -548,12 +562,7 @@ $("current-date").addEventListener("click", () => {
 });
 $("calendar-previous-month").addEventListener("click", () => moveCalendarMonth(-1));
 $("calendar-next-month").addEventListener("click", () => moveCalendarMonth(1));
-$("calendar-month").addEventListener("change", ({ target }) => {
-  if (validMonth(target.value)) {
-    calendarMonth = target.value;
-    renderCalendar();
-  } else target.value = calendarMonth;
-});
+$("calendar-month").addEventListener("change", ({ target }) => setCalendarMonth(target.value));
 $("calendar-days").addEventListener("click", ({ target }) => {
   const day = target.closest("button[data-calendar-day]");
   if (day) selectCalendarPeriod(day.dataset.calendarDay);
